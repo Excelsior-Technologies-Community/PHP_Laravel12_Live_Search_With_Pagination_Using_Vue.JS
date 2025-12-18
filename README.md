@@ -1,59 +1,418 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# PHP_Laravel12_Live_Search_With_Pagination_Using_Vue.JS
+---
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+##  OVERVIEW
 
-## About Laravel
+This project implements **Live Search with Pagination** using:
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- Laravel 12
+- Breeze Authentication
+- Inertia.js
+- Vue 3
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+### What it does
+- Search products LIVE (no submit button)
+- Search by name, detail, price
+- Pagination with search query preserved
+- SPA experience (no reload)
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+##  FEATURES
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+- Laravel 12 backend
+- Vue 3 frontend
+- Inertia.js SPA
+- Live search (debounced)
+- Pagination
+- Clean Tailwind UI
+- Query persistence
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-## Laravel Sponsors
+##  FULL FOLDER STRUCTURE
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```
+app/
+├── Http/
+│   └── Controllers/
+│       └── ProductController.php
+├── Models/
+│   └── Product.php
 
-### Premium Partners
+database/
+└── migrations/
+    └── xxxx_create_products_table.php
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+resources/
+├── js/
+│   ├── app.js
+│   └── Pages/
+│       └── Product/
+│           ├── Index.vue
+│           ├── Create.vue
+│           └── Edit.vue
+└── views/
+    └── app.blade.php
 
-## Contributing
+routes/
+└── web.php
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+.env
+README.md
+```
 
-## Code of Conduct
+---
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+##  STEP 1: INSTALL LARAVEL 12
 
-## Security Vulnerabilities
+```bash
+composer create-project laravel/laravel product-crud
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+---
 
-## License
+##  STEP 2: DATABASE CONFIGURATION
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=live
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+Create database `live` in phpMyAdmin.
+
+---
+
+##  STEP 3: INSTALL BREEZE + INERTIA + VUE
+
+```bash
+composer require laravel/breeze --dev
+
+php artisan breeze:install vue
+
+npm install
+
+php artisan migrate
+
+npm run dev
+
+php artisan serve
+
+```
+
+---
+
+##  STEP 4: CREATE MODEL & MIGRATION
+
+```bash
+php artisan make:model Product -m
+```
+
+### database/migrations/create_products_table.php
+
+```php
+Schema::create('products', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->text('detail')->nullable();
+    $table->decimal('price',10,2)->nullable();
+    $table->timestamps();
+});
+```
+
+Run migration:
+
+```bash
+php artisan migrate
+```
+
+---
+
+##  STEP 5: PRODUCT MODEL
+
+```php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Product extends Model
+{
+    protected $fillable = ['name','detail','price'];
+}
+```
+
+---
+
+##  STEP 6: PRODUCT CONTROLLER (FULL)
+
+```bash
+php artisan make:controller ProductController
+```
+
+```php
+namespace App\Http\Controllers;
+
+use App\Models\Product;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+
+class ProductController extends Controller
+{
+    public function index(Request $request)
+    {
+        $search = $request->search;
+
+        $products = Product::where(function ($q) use ($search) {
+            if ($search) {
+                $q->where('name','like',"%{$search}%")
+                  ->orWhere('detail','like',"%{$search}%")
+                  ->orWhere('price','like',"%{$search}%");
+            }
+        })
+        ->latest()
+        ->paginate(5)
+        ->withQueryString();
+
+        return Inertia::render('Product/Index', [
+            'products' => $products,
+            'filters' => ['search' => $search]
+        ]);
+    }
+
+    public function create()
+    {
+        return Inertia::render('Product/Create');
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'name'=>'required',
+            'detail'=>'nullable',
+            'price'=>'nullable|numeric'
+        ]);
+
+        Product::create($request->only('name','detail','price'));
+        return redirect()->route('products.index');
+    }
+
+    public function edit(Product $product)
+    {
+        return Inertia::render('Product/Edit', [
+            'product'=>$product
+        ]);
+    }
+
+    public function update(Request $request, Product $product)
+    {
+        $request->validate([
+            'name'=>'required',
+            'detail'=>'nullable',
+            'price'=>'nullable|numeric'
+        ]);
+
+        $product->update($request->only('name','detail','price'));
+        return redirect()->route('products.index');
+    }
+
+    public function destroy(Product $product)
+    {
+        $product->delete();
+        return back();
+    }
+}
+```
+
+---
+
+##  STEP 7: ROUTES
+
+```php
+use App\Http\Controllers\ProductController;
+
+Route::get('/products', [ProductController::class,'index'])->name('products.index');
+Route::get('/products/create', [ProductController::class,'create'])->name('products.create');
+Route::post('/products', [ProductController::class,'store'])->name('products.store');
+Route::get('/products/{product}/edit', [ProductController::class,'edit'])->name('products.edit');
+Route::put('/products/{product}', [ProductController::class,'update'])->name('products.update');
+Route::delete('/products/{product}', [ProductController::class,'destroy'])->name('products.destroy');
+```
+
+---
+
+##  STEP 8: INERTIA SETUP
+
+### resources/js/app.js
+
+```js
+import '../css/app.css'
+import './bootstrap'
+
+import { createInertiaApp } from '@inertiajs/vue3'
+import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers'
+import { createApp, h } from 'vue'
+
+createInertiaApp({
+  resolve: name =>
+    resolvePageComponent(`./Pages/${name}.vue`, import.meta.glob('./Pages/**/*.vue')),
+  setup({ el, App, props, plugin }) {
+    createApp({ render: () => h(App, props) })
+      .use(plugin)
+      .mount(el)
+  },
+})
+```
+
+### resources/views/app.blade.php
+
+```blade
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Search</title>
+    @vite(['resources/js/app.js'])
+</head>
+<body>
+    @inertia
+</body>
+</html>
+```
+
+---
+
+##  STEP 9: VUE FILES (FULL)
+
+### Product/Index.vue
+
+```vue
+<script setup>
+import { ref, watch } from 'vue'
+import { router, Link } from '@inertiajs/vue3'
+
+const props = defineProps({
+  products:Object,
+  filters:Object
+})
+
+const search = ref(props.filters.search || '')
+let timer = null
+
+watch(search, (value) => {
+  clearTimeout(timer)
+  timer = setTimeout(() => {
+    router.get('/products', { search: value }, {
+      preserveState: true,
+      replace: true
+    })
+  }, 400)
+})
+</script>
+
+<template>
+  <input v-model="search" placeholder="Search..." />
+
+  <div v-for="p in products.data" :key="p.id">
+    {{ p.name }} - {{ p.price }}
+    <Link :href="`/products/${p.id}/edit`">Edit</Link>
+  </div>
+
+  <div v-html="products.links"></div>
+</template>
+```
+
+---
+
+### Product/Create.vue
+
+```vue
+<script setup>
+import { useForm, Link } from '@inertiajs/vue3'
+
+const form = useForm({
+  name:'',
+  detail:'',
+  price:''
+})
+
+const submit = () => {
+  form.post('/products')
+}
+</script>
+
+<template>
+<form @submit.prevent="submit">
+  <input v-model="form.name" placeholder="Name" />
+  <textarea v-model="form.detail"></textarea>
+  <input v-model="form.price" type="number" />
+  <button>Save</button>
+  <Link href="/products">Back</Link>
+</form>
+</template>
+```
+
+---
+
+### Product/Edit.vue
+
+```vue
+<script setup>
+import { useForm, Link } from '@inertiajs/vue3'
+
+const props = defineProps({ product:Object })
+
+const form = useForm({
+  name: props.product.name,
+  detail: props.product.detail,
+  price: props.product.price
+})
+
+const submit = () => {
+  form.put(`/products/${props.product.id}`)
+}
+</script>
+
+<template>
+<form @submit.prevent="submit">
+  <input v-model="form.name" />
+  <textarea v-model="form.detail"></textarea>
+  <input v-model="form.price" type="number" />
+  <button>Update</button>
+  <Link href="/products">Back</Link>
+</form>
+</template>
+```
+
+---
+
+##  FINAL URL
+
+```
+http://127.0.0.1:8000/products
+```
+INDEX PAGE:-
+
+<img width="1245" height="621" alt="Screenshot 2025-12-18 114845" src="https://github.com/user-attachments/assets/543ca08e-e541-42b8-b8fc-ad4d266097f6" />
+
+CREATE PAGE:-
+
+<img width="913" height="638" alt="Screenshot 2025-12-18 114832" src="https://github.com/user-attachments/assets/c8b3c6cb-eed6-4962-8395-475f2353483f" />
+
+EDIT PAGE:-
+
+<img width="894" height="657" alt="Screenshot 2025-12-18 114858" src="https://github.com/user-attachments/assets/b91e8df9-9bdd-4951-aa39-f01b6e85fc7e" />
+
+SEARCH:-
+
+<img width="1186" height="413" alt="Screenshot 2025-12-17 171010" src="https://github.com/user-attachments/assets/317f61d9-85c3-444a-ad5c-a67726ccbe4a" />
+
+PAGINATION:-
+
+<img width="1184" height="559" alt="Screenshot 2025-12-18 115204" src="https://github.com/user-attachments/assets/b96060ab-41db-48ee-b4a2-29f7f6d34df3" />
+
+
+---
+
