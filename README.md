@@ -284,9 +284,9 @@ createInertiaApp({
 
 ---
 
-##  STEP 9: VUE FILES (FULL)
+##  STEP 9: VUE FILES 
 
-### Product/Index.vue
+### resources/js/Pages/Product/Index.vue
 
 ```vue
 <script setup>
@@ -326,7 +326,7 @@ watch(search, (value) => {
 
 ---
 
-### Product/Create.vue
+### resources/js/Pages/Product/Create.vue
 
 ```vue
 <script setup>
@@ -356,7 +356,7 @@ const submit = () => {
 
 ---
 
-### Product/Edit.vue
+### resources/js/Pages/Product/Edit.vue
 
 ```vue
 <script setup>
