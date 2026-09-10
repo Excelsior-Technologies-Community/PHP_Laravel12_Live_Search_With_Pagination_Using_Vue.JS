@@ -9,6 +9,26 @@ use Inertia\Inertia;
 class ProductController extends Controller
 {
     /**
+     * Search suggestions
+     */
+    public function suggestions(Request $request)
+    {
+        $q = $request->validate([
+            'q' => 'nullable|string|max:255'
+        ])['q'];
+
+        if (blank($q)) {
+            return response()->json([]);
+        }
+
+        $suggestions = Product::where('name', 'like', "%{$q}%")
+            ->limit(5)
+            ->pluck('name');
+
+        return response()->json($suggestions);
+    }
+
+    /**
      * Product list + live search + pagination
      */
     public function index(Request $request)
