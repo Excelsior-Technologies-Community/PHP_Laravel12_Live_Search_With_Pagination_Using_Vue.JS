@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
 use App\Http\Controllers\ProductController;
 
 Route::get('/products', [ProductController::class, 'index'])
@@ -15,6 +14,33 @@ Route::post('/products', [ProductController::class, 'store'])
 
 Route::get('/products/suggestions', [ProductController::class, 'suggestions'])
     ->name('products.suggestions');
+
+/*
+|--------------------------------------------------------------------------
+| Product Statistics
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/products/statistics', [ProductController::class, 'statistics'])
+    ->name('products.statistics');
+
+/*
+|--------------------------------------------------------------------------
+| Product CSV Export
+|--------------------------------------------------------------------------
+|
+| Keep this BEFORE /products/{product}/edit.
+|
+*/
+
+Route::get('/products/export/csv', [ProductController::class, 'exportCsv'])
+    ->name('products.export.csv');
+
+/*
+|--------------------------------------------------------------------------
+| Edit / Update / Delete
+|--------------------------------------------------------------------------
+*/
 
 Route::get('/products/{product}/edit', [ProductController::class, 'edit'])
     ->name('products.edit');
