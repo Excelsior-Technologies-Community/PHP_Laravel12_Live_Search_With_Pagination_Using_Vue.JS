@@ -1,30 +1,34 @@
 <script setup>
-import {
-  ref,
-  watch,
-  computed,
-  onMounted,
-  onUnmounted,
-  nextTick
-} from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
+import { router, Link, usePage } from '@inertiajs/vue3'
 
-import {
-  router,
-  Link,
-  usePage
-} from '@inertiajs/vue3'
+const props = defineProps({
+    products: {
+        type: Object,
+        required: true,
+    },
+
+    filters: {
+        type: Object,
+        default: () => ({}),
+    },
+
+    statistics: {
+        type: Object,
+        default: () => ({}),
+    },
+
+    categories: {
+        type: Array,
+        default: () => [],
+    },
+})
 
 const page = usePage()
 
-const props = defineProps({
-  products: Object,
-  filters: Object,
-  statistics: Object
-})
-
 /*
 |--------------------------------------------------------------------------
-| Search & Filters
+| Filters
 |--------------------------------------------------------------------------
 */
 
@@ -34,13 +38,25 @@ const maxPrice = ref(props.filters.max_price || '')
 const dateFrom = ref(props.filters.date_from || '')
 const dateTo = ref(props.filters.date_to || '')
 
-const sort = ref(
-  props.filters.sort || 'newest'
-)
+const category = ref(props.filters.category || '')
+const status = ref(props.filters.status || '')
+const featured = ref(props.filters.featured || '')
+const stockFilter = ref(props.filters.stock_filter || '')
 
-const perPage = ref(
-  Number(props.filters.per_page || 5)
-)
+const sort = ref(props.filters.sort || 'newest')
+const perPage = ref(Number(props.filters.per_page || 10))
+
+/*
+|--------------------------------------------------------------------------
+| Search Suggestions
+|--------------------------------------------------------------------------
+*/
+
+const suggestions = ref([])
+const showSuggestions = ref(false)
+const loadingSuggestions = ref(false)
+let suggestionTimer = null
+let searchTimer = null
 
 /*
 |--------------------------------------------------------------------------
@@ -48,7 +64,17 @@ const perPage = ref(
 |--------------------------------------------------------------------------
 */
 
-const searchLoading = ref(false)
+const loading = ref(false)
+const exporting = ref(false)
+
+/*
+|--------------------------------------------------------------------------
+| Selection
+|--------------------------------------------------------------------------
+*/
+
+const selectedIds = ref([])
+const bulkLoading = ref(false)
 
 /*
 |--------------------------------------------------------------------------
@@ -58,42 +84,25 @@ const searchLoading = ref(false)
 
 const showDeleteModal = ref(false)
 const deleteId = ref(null)
+const deleting = ref(false)
 
 /*
 |--------------------------------------------------------------------------
-| Toasts
+| Bulk Delete Modal
 |--------------------------------------------------------------------------
 */
 
-const toasts = ref([])
-const lastFlashMessage = ref(null)
+const showBulkDeleteModal = ref(false)
 
 /*
 |--------------------------------------------------------------------------
-| Suggestions
+| Bulk Price Modal
 |--------------------------------------------------------------------------
 */
 
-const suggestions = ref([])
-const showSuggestions = ref(false)
-const suggestionLoading = ref(false)
-
-/*
-|--------------------------------------------------------------------------
-| CSV Export
-|--------------------------------------------------------------------------
-*/
-
-const exportLoading = ref(false)
-
-/*
-|--------------------------------------------------------------------------
-| Search Timer
-|--------------------------------------------------------------------------
-*/
-
-let searchTimer = null
-let suggestionTimer = null
+const showBulkPriceModal = ref(false)
+const bulkPriceMode = ref('set')
+const bulkPriceValue = ref('')
 
 /*
 |--------------------------------------------------------------------------
@@ -101,19 +110,26 @@ let suggestionTimer = null
 |--------------------------------------------------------------------------
 */
 
-const showToast = (message) => {
-  const id = Date.now()
+const toast = ref({
+    show: false,
+    message: '',
+    type: 'success',
+})
 
-  toasts.value.push({
-    id,
-    message
-  })
+let toastTimer = null
 
-  setTimeout(() => {
-    toasts.value = toasts.value.filter(
-      toast => toast.id !== id
-    )
-  }, 3000)
+const showToast = (message, type = 'success') => {
+    toast.value = {
+        show: true,
+        message,
+        type,
+    }
+
+    clearTimeout(toastTimer)
+
+    toastTimer = setTimeout(() => {
+        toast.value.show = false
+    }, 3500)
 }
 
 /*
@@ -122,219 +138,40 @@ const showToast = (message) => {
 |--------------------------------------------------------------------------
 */
 
-const flashMessage = computed(() => {
-  try {
-    return page.props?.flash?.success || null
-  } catch (e) {
-    return null
-  }
-})
+const flashSuccess = computed(() => page.props.flash?.success || '')
 
 watch(
-  flashMessage,
-  (newValue) => {
-    if (
-      newValue &&
-      newValue !== lastFlashMessage.value
-    ) {
-      lastFlashMessage.value = newValue
-      showToast(newValue)
-    }
-  }
+    flashSuccess,
+    (message) => {
+        if (message) {
+            showToast(message, 'success')
+        }
+    },
+    { immediate: true }
 )
 
-onMounted(async () => {
-  await nextTick()
-
-  if (
-    flashMessage.value &&
-    !lastFlashMessage.value
-  ) {
-    lastFlashMessage.value =
-      flashMessage.value
-
-    showToast(flashMessage.value)
-  }
-})
-
 /*
 |--------------------------------------------------------------------------
-| Close Suggestions
-|--------------------------------------------------------------------------
-*/
-
-const closeSuggestions = (event) => {
-  if (
-    !event.target.closest('.search-container')
-  ) {
-    showSuggestions.value = false
-  }
-}
-
-onMounted(() => {
-  document.addEventListener(
-    'click',
-    closeSuggestions
-  )
-})
-
-onUnmounted(() => {
-  document.removeEventListener(
-    'click',
-    closeSuggestions
-  )
-})
-
-/*
-|--------------------------------------------------------------------------
-| Current Filter Parameters
+| Filter Parameters
 |--------------------------------------------------------------------------
 */
 
 const getFilterParams = () => {
-  return {
-    search: search.value || undefined,
+    return {
+        search: search.value || undefined,
+        min_price: minPrice.value || undefined,
+        max_price: maxPrice.value || undefined,
+        date_from: dateFrom.value || undefined,
+        date_to: dateTo.value || undefined,
 
-    min_price:
-      minPrice.value !== ''
-        ? minPrice.value
-        : undefined,
+        category: category.value || undefined,
+        status: status.value || undefined,
+        featured: featured.value || undefined,
+        stock_filter: stockFilter.value || undefined,
 
-    max_price:
-      maxPrice.value !== ''
-        ? maxPrice.value
-        : undefined,
-
-    date_from:
-      dateFrom.value || undefined,
-
-    date_to:
-      dateTo.value || undefined,
-
-    sort: sort.value,
-
-    per_page: perPage.value
-  }
-}
-
-/*
-|--------------------------------------------------------------------------
-| Export Filtered Products to CSV
-|--------------------------------------------------------------------------
-*/
-
-const exportCsv = () => {
-  exportLoading.value = true
-
-  const params = new URLSearchParams()
-
-  /*
-  |----------------------------------------------------------------------
-  | Search
-  |----------------------------------------------------------------------
-  */
-
-  if (search.value) {
-    params.append(
-      'search',
-      search.value
-    )
-  }
-
-  /*
-  |----------------------------------------------------------------------
-  | Minimum Price
-  |----------------------------------------------------------------------
-  */
-
-  if (minPrice.value !== '') {
-    params.append(
-      'min_price',
-      minPrice.value
-    )
-  }
-
-  /*
-  |----------------------------------------------------------------------
-  | Maximum Price
-  |----------------------------------------------------------------------
-  */
-
-  if (maxPrice.value !== '') {
-    params.append(
-      'max_price',
-      maxPrice.value
-    )
-  }
-
-  /*
-  |----------------------------------------------------------------------
-  | Date From
-  |----------------------------------------------------------------------
-  */
-
-  if (dateFrom.value) {
-    params.append(
-      'date_from',
-      dateFrom.value
-    )
-  }
-
-  /*
-  |----------------------------------------------------------------------
-  | Date To
-  |----------------------------------------------------------------------
-  */
-
-  if (dateTo.value) {
-    params.append(
-      'date_to',
-      dateTo.value
-    )
-  }
-
-  /*
-  |----------------------------------------------------------------------
-  | Sorting
-  |----------------------------------------------------------------------
-  */
-
-  if (sort.value) {
-    params.append(
-      'sort',
-      sort.value
-    )
-  }
-
-  /*
-  |----------------------------------------------------------------------
-  | Create Download URL
-  |----------------------------------------------------------------------
-  */
-
-  const queryString = params.toString()
-
-  const url = queryString
-    ? `/products/export/csv?${queryString}`
-    : '/products/export/csv'
-
-  /*
-  |----------------------------------------------------------------------
-  | Start CSV Download
-  |----------------------------------------------------------------------
-  */
-
-  window.location.href = url
-
-  /*
-  |----------------------------------------------------------------------
-  | Reset Loading State
-  |----------------------------------------------------------------------
-  */
-
-  setTimeout(() => {
-    exportLoading.value = false
-  }, 1000)
+        sort: sort.value || undefined,
+        per_page: perPage.value || undefined,
+    }
 }
 
 /*
@@ -343,115 +180,96 @@ const exportCsv = () => {
 |--------------------------------------------------------------------------
 */
 
-const loadProducts = (
-  options = {}
-) => {
-  searchLoading.value = true
+const loadProducts = () => {
+    loading.value = true
 
-  router.get(
-    '/products',
-    getFilterParams(),
-    {
-      preserveState: true,
-      preserveScroll: true,
-      replace: true,
+    router.get(
+        '/products',
+        getFilterParams(),
+        {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
 
-      ...options,
-
-      onFinish: () => {
-        searchLoading.value = false
-
-        if (options.onFinish) {
-          options.onFinish()
+            onFinish: () => {
+                loading.value = false
+            },
         }
-      }
-    }
-  )
+    )
 }
 
 /*
 |--------------------------------------------------------------------------
-| Live Search
+| Search
 |--------------------------------------------------------------------------
 */
 
-watch(
-  search,
-  (value) => {
+watch(search, () => {
     clearTimeout(searchTimer)
 
     searchTimer = setTimeout(() => {
-      loadProducts()
+        loadProducts()
     }, 400)
-  }
-)
+
+    fetchSuggestions()
+})
 
 /*
 |--------------------------------------------------------------------------
-| Search Suggestions
+| Suggestions
 |--------------------------------------------------------------------------
 */
 
-watch(
-  search,
-  (value) => {
+const fetchSuggestions = () => {
     clearTimeout(suggestionTimer)
 
-    if (!value || value.length === 0) {
-      suggestions.value = []
-      showSuggestions.value = false
-      suggestionLoading.value = false
-
-      return
+    if (!search.value || search.value.length < 2) {
+        suggestions.value = []
+        showSuggestions.value = false
+        return
     }
 
-    suggestionTimer = setTimeout(
-      async () => {
-        suggestionLoading.value = true
+    suggestionTimer = setTimeout(async () => {
+        loadingSuggestions.value = true
 
         try {
-          const response = await fetch(
-            `/products/suggestions?q=${encodeURIComponent(value)}`
-          )
+            const response = await fetch(
+                `/products/suggestions?q=${encodeURIComponent(search.value)}`
+            )
 
-          const data =
-            await response.json()
+            if (!response.ok) {
+                throw new Error('Unable to load suggestions.')
+            }
 
-          suggestions.value = data
+            suggestions.value = await response.json()
 
-          showSuggestions.value =
-            data.length > 0
+            showSuggestions.value = suggestions.value.length > 0
         } catch (error) {
-          suggestions.value = []
-          showSuggestions.value = false
+            suggestions.value = []
+            showSuggestions.value = false
+        } finally {
+            loadingSuggestions.value = false
         }
+    }, 250)
+}
 
-        suggestionLoading.value = false
-      },
-      250
-    )
-  }
-)
+const selectSuggestion = (suggestion) => {
+    search.value = suggestion.name || suggestion
+    suggestions.value = []
+    showSuggestions.value = false
 
-/*
-|--------------------------------------------------------------------------
-| Select Suggestion
-|--------------------------------------------------------------------------
-*/
-
-const selectSuggestion = (name) => {
-  search.value = name
-  showSuggestions.value = false
+    loadProducts()
 }
 
 /*
 |--------------------------------------------------------------------------
-| Apply Advanced Filters
+| Apply Filters
 |--------------------------------------------------------------------------
 */
 
 const applyFilters = () => {
-  loadProducts()
+    showSuggestions.value = false
+    loadProducts()
 }
 
 /*
@@ -461,15 +279,23 @@ const applyFilters = () => {
 */
 
 const clearFilters = () => {
-  search.value = ''
-  minPrice.value = ''
-  maxPrice.value = ''
-  dateFrom.value = ''
-  dateTo.value = ''
-  sort.value = 'newest'
-  perPage.value = 5
+    search.value = ''
+    minPrice.value = ''
+    maxPrice.value = ''
+    dateFrom.value = ''
+    dateTo.value = ''
 
-  loadProducts()
+    category.value = ''
+    status.value = ''
+    featured.value = ''
+    stockFilter.value = ''
+
+    sort.value = 'newest'
+    perPage.value = 10
+
+    selectedIds.value = []
+
+    loadProducts()
 }
 
 /*
@@ -479,7 +305,7 @@ const clearFilters = () => {
 */
 
 const changeSort = () => {
-  loadProducts()
+    loadProducts()
 }
 
 /*
@@ -488,42 +314,388 @@ const changeSort = () => {
 |--------------------------------------------------------------------------
 */
 
-const changePageSize = () => {
-  loadProducts()
+const changePerPage = () => {
+    loadProducts()
 }
 
 /*
 |--------------------------------------------------------------------------
-| Delete Product
+| Stock Quick Filters
 |--------------------------------------------------------------------------
 */
 
-const deleteProduct = (id) => {
-  deleteId.value = id
-  showDeleteModal.value = true
+const setStockFilter = (value) => {
+    stockFilter.value = value
+    loadProducts()
 }
 
-const confirmDelete = () => {
-  if (!deleteId.value) {
-    return
-  }
+/*
+|--------------------------------------------------------------------------
+| Export CSV
+|--------------------------------------------------------------------------
+*/
 
-  router.delete(
-    `/products/${deleteId.value}`,
-    {
-      preserveScroll: true,
+const exportCsv = () => {
+    exporting.value = true
 
-      onSuccess: () => {
-        showDeleteModal.value = false
-        deleteId.value = null
-      }
+    const params = new URLSearchParams()
+
+    Object.entries(getFilterParams()).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+            params.append(key, value)
+        }
+    })
+
+    window.location.href = `/products/export/csv?${params.toString()}`
+
+    setTimeout(() => {
+        exporting.value = false
+    }, 1500)
+}
+
+/*
+|--------------------------------------------------------------------------
+| Delete
+|--------------------------------------------------------------------------
+*/
+
+const openDeleteModal = (id) => {
+    deleteId.value = id
+    showDeleteModal.value = true
+}
+
+const closeDeleteModal = () => {
+    if (deleting.value) {
+        return
     }
-  )
+
+    showDeleteModal.value = false
+    deleteId.value = null
 }
 
-const cancelDelete = () => {
-  showDeleteModal.value = false
-  deleteId.value = null
+const deleteProduct = () => {
+    if (!deleteId.value) {
+        return
+    }
+
+    deleting.value = true
+
+    router.delete(`/products/${deleteId.value}`, {
+        preserveScroll: true,
+
+        onSuccess: () => {
+            showToast('Product deleted successfully.')
+
+            selectedIds.value = selectedIds.value.filter(
+                id => id !== deleteId.value
+            )
+
+            closeDeleteModal()
+        },
+
+        onFinish: () => {
+            deleting.value = false
+        },
+    })
+}
+
+/*
+|--------------------------------------------------------------------------
+| Selection
+|--------------------------------------------------------------------------
+*/
+
+const isSelected = (id) => {
+    return selectedIds.value.includes(id)
+}
+
+const toggleSelection = (id) => {
+    if (isSelected(id)) {
+        selectedIds.value = selectedIds.value.filter(
+            selectedId => selectedId !== id
+        )
+    } else {
+        selectedIds.value.push(id)
+    }
+}
+
+const allCurrentPageSelected = computed(() => {
+    if (!props.products.data || props.products.data.length === 0) {
+        return false
+    }
+
+    return props.products.data.every(product =>
+        selectedIds.value.includes(product.id)
+    )
+})
+
+const toggleSelectAll = () => {
+    const pageIds = props.products.data.map(product => product.id)
+
+    if (allCurrentPageSelected.value) {
+        selectedIds.value = selectedIds.value.filter(
+            id => !pageIds.includes(id)
+        )
+    } else {
+        const merged = new Set([
+            ...selectedIds.value,
+            ...pageIds,
+        ])
+
+        selectedIds.value = Array.from(merged)
+    }
+}
+
+const clearSelection = () => {
+    selectedIds.value = []
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bulk Delete
+|--------------------------------------------------------------------------
+*/
+
+const openBulkDeleteModal = () => {
+    if (selectedIds.value.length === 0) {
+        showToast('Please select at least one product.', 'error')
+        return
+    }
+
+    showBulkDeleteModal.value = true
+}
+
+const closeBulkDeleteModal = () => {
+    if (bulkLoading.value) {
+        return
+    }
+
+    showBulkDeleteModal.value = false
+}
+
+const bulkDelete = () => {
+    if (selectedIds.value.length === 0) {
+        return
+    }
+
+    bulkLoading.value = true
+
+    router.post(
+        '/products/bulk-delete',
+        {
+            ids: selectedIds.value,
+        },
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                showToast(
+                    `${selectedIds.value.length} product(s) deleted successfully.`
+                )
+
+                selectedIds.value = []
+                showBulkDeleteModal.value = false
+            },
+
+            onFinish: () => {
+                bulkLoading.value = false
+            },
+        }
+    )
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bulk Status
+|--------------------------------------------------------------------------
+*/
+
+const bulkStatus = (newStatus) => {
+    if (selectedIds.value.length === 0) {
+        showToast('Please select at least one product.', 'error')
+        return
+    }
+
+    const actionText =
+        newStatus === 'active'
+            ? 'activated'
+            : 'deactivated'
+
+    if (
+        !confirm(
+            `Are you sure you want to ${newStatus === 'active' ? 'activate' : 'deactivate'} ${selectedIds.value.length} selected product(s)?`
+        )
+    ) {
+        return
+    }
+
+    bulkLoading.value = true
+
+    router.post(
+        '/products/bulk-status',
+        {
+            ids: selectedIds.value,
+            status: newStatus,
+        },
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                showToast(
+                    `${selectedIds.value.length} product(s) ${actionText} successfully.`
+                )
+
+                selectedIds.value = []
+            },
+
+            onFinish: () => {
+                bulkLoading.value = false
+            },
+        }
+    )
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bulk Price Update
+|--------------------------------------------------------------------------
+*/
+
+const openBulkPriceModal = () => {
+    if (selectedIds.value.length === 0) {
+        showToast('Please select at least one product.', 'error')
+        return
+    }
+
+    bulkPriceMode.value = 'set'
+    bulkPriceValue.value = ''
+    showBulkPriceModal.value = true
+}
+
+const closeBulkPriceModal = () => {
+    if (bulkLoading.value) {
+        return
+    }
+
+    showBulkPriceModal.value = false
+}
+
+const bulkPriceUpdate = () => {
+    if (!bulkPriceValue.value || Number(bulkPriceValue.value) < 0) {
+        showToast('Please enter a valid price value.', 'error')
+        return
+    }
+
+    bulkLoading.value = true
+
+    router.post(
+        '/products/bulk-price-update',
+        {
+            ids: selectedIds.value,
+            price_mode: bulkPriceMode.value,
+            price_value: bulkPriceValue.value,
+        },
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                showToast(
+                    `${selectedIds.value.length} product(s) price updated successfully.`
+                )
+
+                selectedIds.value = []
+                showBulkPriceModal.value = false
+                bulkPriceValue.value = ''
+            },
+
+            onFinish: () => {
+                bulkLoading.value = false
+            },
+        }
+    )
+}
+
+/*
+|--------------------------------------------------------------------------
+| Duplicate / Clone
+|--------------------------------------------------------------------------
+*/
+
+const duplicateProduct = (id) => {
+    if (
+        !confirm(
+            'Are you sure you want to duplicate this product?'
+        )
+    ) {
+        return
+    }
+
+    router.post(
+        `/products/${id}/duplicate`,
+        {},
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                showToast('Product duplicated successfully.')
+            },
+        }
+    )
+}
+
+/*
+|--------------------------------------------------------------------------
+| Featured Toggle
+|--------------------------------------------------------------------------
+*/
+
+const toggleFeatured = (product) => {
+    router.post(
+        `/products/${product.id}/toggle-featured`,
+        {},
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                showToast(
+                    product.is_featured
+                        ? 'Product removed from featured.'
+                        : 'Product marked as featured.'
+                )
+            },
+        }
+    )
+}
+
+/*
+|--------------------------------------------------------------------------
+| Status Toggle
+|--------------------------------------------------------------------------
+*/
+
+const toggleStatus = (product) => {
+    const newStatus =
+        product.status === 'active'
+            ? 'inactive'
+            : 'active'
+
+    router.post(
+        `/products/${product.id}/toggle-status`,
+        {
+            status: newStatus,
+        },
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                showToast(
+                    newStatus === 'active'
+                        ? 'Product activated successfully.'
+                        : 'Product deactivated successfully.'
+                )
+            },
+        }
+    )
 }
 
 /*
@@ -532,831 +704,1120 @@ const cancelDelete = () => {
 |--------------------------------------------------------------------------
 */
 
-const goToPage = (url) => {
-  if (!url) {
-    return
-  }
-
-  router.get(
-    url,
-    {},
-    {
-      preserveState: true,
-      preserveScroll: true
+const numericPaginationLinks = computed(() => {
+    if (!props.products?.links) {
+        return []
     }
-  )
+
+    return props.products.links.filter(link => {
+        if (!link.url) {
+            return false
+        }
+
+        return /^\d+$/.test(
+            String(link.label).replace(/&hellip;/g, '')
+        )
+    })
+})
+
+const goToPage = (url) => {
+    if (!url) {
+        return
+    }
+
+    router.get(
+        url,
+        {},
+        {
+            preserveState: true,
+            preserveScroll: true,
+        }
+    )
 }
 
 /*
 |--------------------------------------------------------------------------
-| Currency Formatting
+| Helpers
 |--------------------------------------------------------------------------
 */
 
-const formatPrice = (price) => {
-  if (
-    price === null ||
-    price === undefined ||
-    price === ''
-  ) {
-    return '-'
-  }
-
-  return Number(price).toLocaleString(
-    'en-IN',
-    {
-      maximumFractionDigits: 2
-    }
-  )
+const formatPrice = (value) => {
+    return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        maximumFractionDigits: 2,
+    }).format(Number(value || 0))
 }
+
+const formatDate = (date) => {
+    if (!date) {
+        return '-'
+    }
+
+    return new Date(date).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    })
+}
+
+const stockClass = (stock) => {
+    const value = Number(stock || 0)
+
+    if (value === 0) {
+        return 'bg-red-100 text-red-700'
+    }
+
+    if (value <= 5) {
+        return 'bg-yellow-100 text-yellow-700'
+    }
+
+    return 'bg-green-100 text-green-700'
+}
+
+const stockLabel = (stock) => {
+    const value = Number(stock || 0)
+
+    if (value === 0) {
+        return 'Out of Stock'
+    }
+
+    if (value <= 5) {
+        return 'Low Stock'
+    }
+
+    return 'In Stock'
+}
+
+/*
+|--------------------------------------------------------------------------
+| Cleanup
+|--------------------------------------------------------------------------
+*/
+
+onMounted(() => {
+    document.addEventListener('click', handleOutsideClick)
+})
+
+const handleOutsideClick = (event) => {
+    const target = event.target
+
+    if (!target.closest('.suggestion-container')) {
+        showSuggestions.value = false
+    }
+}
+
+onUnmounted(() => {
+    clearTimeout(searchTimer)
+    clearTimeout(suggestionTimer)
+    clearTimeout(toastTimer)
+
+    document.removeEventListener(
+        'click',
+        handleOutsideClick
+    )
+})
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-100 p-8">
+    <div class="min-h-screen bg-gray-100 py-8">
 
-    <!-- ===================================================== -->
-    <!-- TOASTS -->
-    <!-- ===================================================== -->
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 
-    <div
-      class="fixed top-4 right-4 z-[9999] space-y-2"
-    >
-      <transition-group name="toast">
-        <div
-          v-for="toast in toasts"
-          :key="toast.id"
-          class="px-4 py-3 rounded shadow-lg text-white bg-green-600 min-w-[220px]"
-        >
-          {{ toast.message }}
-        </div>
-      </transition-group>
-    </div>
+            <!-- Header -->
+            <div class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">
+                        Product Management
+                    </h1>
 
-    <div
-      class="max-w-7xl mx-auto bg-white rounded shadow p-6"
-    >
-
-      <!-- ===================================================== -->
-      <!-- HEADER -->
-      <!-- ===================================================== -->
-
-      <div
-        class="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6"
-      >
-
-        <div class="flex items-center gap-2">
-          <span class="text-xl">📦</span>
-
-          <div>
-            <h1
-              class="text-xl font-semibold"
-            >
-              Products
-            </h1>
-
-            <p
-              class="text-sm text-gray-500"
-            >
-              Live Search & Pagination
-            </p>
-          </div>
-        </div>
-
-
-<div class="flex flex-wrap gap-2">
-
-    <!-- CSV EXPORT -->
-
-    <button
-        type="button"
-        @click="exportCsv"
-        :disabled="exportLoading"
-        class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-    >
-        <span v-if="!exportLoading">
-            📥 Export CSV
-        </span>
-
-        <span v-else>
-            ⏳ Exporting...
-        </span>
-    </button>
-
-
-    <!-- STATISTICS -->
-
-    <Link
-        href="/products/statistics"
-        class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700"
-    >
-        📊 Statistics
-    </Link>
-
-
-    <!-- CREATE -->
-
-    <Link
-        href="/products/create"
-        class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-    >
-        + Create New Product
-    </Link>
-
-</div>
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- STATISTICS CARDS -->
-      <!-- ===================================================== -->
-
-      <div
-        class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6"
-      >
-
-        <!-- Total -->
-
-        <div
-          class="bg-blue-50 border border-blue-200 rounded-lg p-4"
-        >
-          <p
-            class="text-sm text-blue-600"
-          >
-            Total Products
-          </p>
-
-          <p
-            class="text-2xl font-bold text-blue-800"
-          >
-            {{ statistics.total_products }}
-          </p>
-        </div>
-
-
-        <!-- Filtered -->
-
-        <div
-          class="bg-green-50 border border-green-200 rounded-lg p-4"
-        >
-          <p
-            class="text-sm text-green-600"
-          >
-            Filtered Results
-          </p>
-
-          <p
-            class="text-2xl font-bold text-green-800"
-          >
-            {{ statistics.filtered_products }}
-          </p>
-        </div>
-
-
-        <!-- Average -->
-
-        <div
-          class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
-        >
-          <p
-            class="text-sm text-yellow-600"
-          >
-            Average Price
-          </p>
-
-          <p
-            class="text-2xl font-bold text-yellow-800"
-          >
-            ₹{{ formatPrice(statistics.average_price) }}
-          </p>
-        </div>
-
-
-        <!-- Lowest -->
-
-        <div
-          class="bg-indigo-50 border border-indigo-200 rounded-lg p-4"
-        >
-          <p
-            class="text-sm text-indigo-600"
-          >
-            Lowest Price
-          </p>
-
-          <p
-            class="text-2xl font-bold text-indigo-800"
-          >
-            ₹{{ formatPrice(statistics.lowest_price) }}
-          </p>
-        </div>
-
-
-        <!-- Highest -->
-
-        <div
-          class="bg-red-50 border border-red-200 rounded-lg p-4"
-        >
-          <p
-            class="text-sm text-red-600"
-          >
-            Highest Price
-          </p>
-
-          <p
-            class="text-2xl font-bold text-red-800"
-          >
-            ₹{{ formatPrice(statistics.highest_price) }}
-          </p>
-        </div>
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- SEARCH -->
-      <!-- ===================================================== -->
-
-      <div
-        class="search-container relative mb-4"
-      >
-
-        <label
-          class="block text-sm font-medium text-gray-700 mb-1"
-        >
-          Live Product Search
-        </label>
-
-        <div class="relative">
-
-          <input
-            v-model="search"
-            placeholder="Search by name, detail or price..."
-            class="border p-3 w-full rounded-lg pr-12 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-          />
-
-          <!-- Search Loading -->
-
-          <div
-            v-if="searchLoading"
-            class="absolute right-3 top-3"
-          >
-            <svg
-              class="animate-spin h-5 w-5 text-gray-400"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              />
-
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-          </div>
-
-        </div>
-
-
-        <!-- ===================================================== -->
-        <!-- SEARCH SUGGESTIONS -->
-        <!-- ===================================================== -->
-
-        <div
-          v-if="
-            showSuggestions &&
-            suggestions.length > 0
-          "
-          class="absolute z-10 w-full bg-white border rounded-lg shadow mt-1"
-        >
-
-          <div
-            v-for="(
-              suggestion,
-              index
-            ) in suggestions"
-            :key="index"
-            @mousedown.prevent="
-              selectSuggestion(suggestion)
-            "
-            class="px-4 py-3 hover:bg-gray-100 cursor-pointer text-sm"
-          >
-            🔎 {{ suggestion }}
-          </div>
-
-        </div>
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- ADVANCED FILTERS -->
-      <!-- ===================================================== -->
-
-      <div
-        class="bg-gray-50 border rounded-lg p-5 mb-6"
-      >
-
-        <div
-          class="flex justify-between items-center mb-4"
-        >
-
-          <h2
-            class="font-semibold text-gray-800"
-          >
-            🔎 Advanced Filters
-          </h2>
-
-          <button
-            type="button"
-            @click="clearFilters"
-            class="text-sm text-red-600 hover:underline"
-          >
-            Clear All
-          </button>
-
-        </div>
-
-
-        <div
-          class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-        >
-
-          <!-- Minimum Price -->
-
-          <div>
-            <label
-              class="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Minimum Price
-            </label>
-
-            <input
-              v-model="minPrice"
-              type="number"
-              min="0"
-              placeholder="₹ Minimum"
-              class="w-full border rounded-lg px-3 py-2"
-            />
-          </div>
-
-
-          <!-- Maximum Price -->
-
-          <div>
-            <label
-              class="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Maximum Price
-            </label>
-
-            <input
-              v-model="maxPrice"
-              type="number"
-              min="0"
-              placeholder="₹ Maximum"
-              class="w-full border rounded-lg px-3 py-2"
-            />
-          </div>
-
-
-          <!-- Date From -->
-
-          <div>
-            <label
-              class="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Created From
-            </label>
-
-            <input
-              v-model="dateFrom"
-              type="date"
-              class="w-full border rounded-lg px-3 py-2"
-            />
-          </div>
-
-
-          <!-- Date To -->
-
-          <div>
-            <label
-              class="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Created To
-            </label>
-
-            <input
-              v-model="dateTo"
-              type="date"
-              class="w-full border rounded-lg px-3 py-2"
-            />
-          </div>
-
-        </div>
-
-
-        <div class="mt-4">
-
-          <button
-            type="button"
-            @click="applyFilters"
-            class="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700"
-          >
-            Apply Filters
-          </button>
-
-        </div>
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- SORTING + PAGE SIZE -->
-      <!-- ===================================================== -->
-
-      <div
-        class="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-5"
-      >
-
-        <div class="flex items-center gap-2">
-
-          <label
-            class="text-sm font-medium text-gray-700"
-          >
-            Sort By:
-          </label>
-
-          <select
-            v-model="sort"
-            @change="changeSort"
-            class="border rounded-lg px-3 py-2"
-          >
-
-            <option value="newest">
-              Newest First
-            </option>
-
-            <option value="oldest">
-              Oldest First
-            </option>
-
-            <option value="name_asc">
-              Name A-Z
-            </option>
-
-            <option value="name_desc">
-              Name Z-A
-            </option>
-
-            <option value="price_low">
-              Price Low to High
-            </option>
-
-            <option value="price_high">
-              Price High to Low
-            </option>
-
-          </select>
-
-        </div>
-
-
-        <div class="flex items-center gap-2">
-
-          <label
-            class="text-sm font-medium text-gray-700"
-          >
-            Show:
-          </label>
-
-          <select
-            v-model="perPage"
-            @change="changePageSize"
-            class="border rounded-lg px-3 py-2"
-          >
-
-            <option :value="5">
-              5
-            </option>
-
-            <option :value="10">
-              10
-            </option>
-
-            <option :value="20">
-              20
-            </option>
-
-            <option :value="50">
-              50
-            </option>
-
-          </select>
-
-          <span
-            class="text-sm text-gray-500"
-          >
-            products per page
-          </span>
-
-        </div>
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- RESULT INFORMATION -->
-      <!-- ===================================================== -->
-
-      <div
-        class="mb-4 text-sm text-gray-600"
-      >
-
-        Showing
-        <span class="font-semibold">
-          {{ products.from || 0 }}
-        </span>
-
-        -
-        <span class="font-semibold">
-          {{ products.to || 0 }}
-        </span>
-
-        of
-
-        <span class="font-semibold">
-          {{ products.total }}
-        </span>
-
-        products
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- TABLE -->
-      <!-- ===================================================== -->
-
-      <div class="overflow-x-auto">
-
-        <table
-          class="w-full border-collapse"
-        >
-
-          <thead>
-
-            <tr
-              class="border-b bg-gray-50 text-left"
-            >
-
-              <th class="p-3">
-                Name
-              </th>
-
-              <th class="p-3">
-                Detail
-              </th>
-
-              <th class="p-3">
-                Price
-              </th>
-
-              <th class="p-3">
-                Created
-              </th>
-
-              <th class="p-3">
-                Actions
-              </th>
-
-            </tr>
-
-          </thead>
-
-
-          <tbody>
-
-            <tr
-              v-for="product in products.data"
-              :key="product.id"
-              class="border-b hover:bg-gray-50"
-            >
-
-              <!-- Name -->
-
-              <td
-                class="p-3 font-medium"
-              >
-                {{ product.name }}
-              </td>
-
-
-              <!-- Detail -->
-
-              <td
-                class="p-3 text-gray-600"
-              >
-                {{ product.detail ?? '-' }}
-              </td>
-
-
-              <!-- Price -->
-
-              <td
-                class="p-3 text-green-600 font-semibold"
-              >
-                {{
-                  product.price !== null
-                    ? `₹ ${formatPrice(product.price)}`
-                    : '-'
-                }}
-              </td>
-
-
-              <!-- Created -->
-
-              <td
-                class="p-3 text-gray-500 text-sm"
-              >
-                {{
-                  new Date(
-                    product.created_at
-                  ).toLocaleDateString(
-                    'en-IN'
-                  )
-                }}
-              </td>
-
-
-              <!-- Actions -->
-
-              <td class="p-3">
-
-                <Link
-                  :href="`/products/${product.id}/edit`"
-                  class="text-blue-600 mr-3 hover:underline"
-                >
-                  Edit
-                </Link>
-
-                <button
-                  @click="
-                    deleteProduct(product.id)
-                  "
-                  class="text-red-600 hover:underline"
-                >
-                  Delete
-                </button>
-
-              </td>
-
-            </tr>
-
-
-            <!-- Empty -->
-
-            <tr
-              v-if="products.data.length === 0"
-            >
-
-              <td
-                colspan="5"
-                class="p-8 text-center text-gray-500"
-              >
-
-                <div class="text-4xl mb-2">
-                  🔍
+                    <p class="mt-1 text-sm text-gray-600">
+                        Manage, search, filter, clone and export products
+                    </p>
                 </div>
 
-                <p
-                  class="font-medium"
+                <div class="flex flex-wrap gap-2">
+
+                    <button
+                        type="button"
+                        @click="exportCsv"
+                        :disabled="exporting"
+                        class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {{ exporting ? 'Exporting...' : 'Export CSV' }}
+                    </button>
+
+                    <Link
+                        href="/products/statistics"
+                        class="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-purple-700"
+                    >
+                        Statistics
+                    </Link>
+
+                    <Link
+                        href="/products/create"
+                        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+                    >
+                        + Create Product
+                    </Link>
+
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+
+                <div class="rounded-xl bg-white p-5 shadow">
+                    <p class="text-sm text-gray-500">
+                        Total Products
+                    </p>
+
+                    <p class="mt-2 text-2xl font-bold text-gray-900">
+                        {{ statistics.total_products ?? 0 }}
+                    </p>
+                </div>
+
+                <div class="rounded-xl bg-white p-5 shadow">
+                    <p class="text-sm text-gray-500">
+                        Filtered Products
+                    </p>
+
+                    <p class="mt-2 text-2xl font-bold text-blue-600">
+                        {{ statistics.filtered_products ?? 0 }}
+                    </p>
+                </div>
+
+                <div class="rounded-xl bg-white p-5 shadow">
+                    <p class="text-sm text-gray-500">
+                        Average Price
+                    </p>
+
+                    <p class="mt-2 text-2xl font-bold text-purple-600">
+                        {{ formatPrice(statistics.average_price) }}
+                    </p>
+                </div>
+
+                <div class="rounded-xl bg-white p-5 shadow">
+                    <p class="text-sm text-gray-500">
+                        Inventory Value
+                    </p>
+
+                    <p class="mt-2 text-2xl font-bold text-emerald-600">
+                        {{ formatPrice(statistics.inventory_value) }}
+                    </p>
+                </div>
+
+                <div class="rounded-xl bg-white p-5 shadow">
+                    <p class="text-sm text-gray-500">
+                        Low / Out Stock
+                    </p>
+
+                    <p class="mt-2 text-2xl font-bold text-red-600">
+                        {{ statistics.low_stock_products ?? 0 }}
+                        /
+                        {{ statistics.out_of_stock_products ?? 0 }}
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- Search and Filters -->
+            <div class="mb-6 rounded-xl bg-white p-6 shadow">
+
+                <div class="mb-5">
+
+                    <h2 class="text-lg font-bold text-gray-900">
+                        Search & Filters
+                    </h2>
+
+                    <p class="text-sm text-gray-500">
+                        Filter products using multiple conditions
+                    </p>
+
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+
+                    <!-- Search -->
+                    <div class="suggestion-container relative lg:col-span-2">
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Search Product
+                        </label>
+
+                        <input
+                            v-model="search"
+                            type="text"
+                            placeholder="Search product name, detail or price..."
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            @focus="showSuggestions = suggestions.length > 0"
+                        />
+
+                        <div
+                            v-if="loadingSuggestions"
+                            class="absolute right-3 top-9 text-xs text-gray-400"
+                        >
+                            Searching...
+                        </div>
+
+                        <!-- Suggestions -->
+                        <div
+                            v-if="showSuggestions && suggestions.length"
+                            class="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+                        >
+
+                            <button
+                                v-for="suggestion in suggestions"
+                                :key="suggestion.id || suggestion.name"
+                                type="button"
+                                class="block w-full border-b border-gray-100 px-4 py-3 text-left text-sm hover:bg-gray-50"
+                                @click="selectSuggestion(suggestion)"
+                            >
+                                <span class="font-medium text-gray-900">
+                                    {{ suggestion.name }}
+                                </span>
+
+                                <span
+                                    v-if="suggestion.price !== undefined"
+                                    class="ml-2 text-gray-500"
+                                >
+                                    {{ formatPrice(suggestion.price) }}
+                                </span>
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                    <!-- Category -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Category
+                        </label>
+
+                        <select
+                            v-model="category"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            @change="applyFilters"
+                        >
+                            <option value="">
+                                All Categories
+                            </option>
+
+                            <option
+                                v-for="item in categories"
+                                :key="item"
+                                :value="item"
+                            >
+                                {{ item }}
+                            </option>
+                        </select>
+
+                    </div>
+
+                    <!-- Status -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Status
+                        </label>
+
+                        <select
+                            v-model="status"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            @change="applyFilters"
+                        >
+                            <option value="">
+                                All Status
+                            </option>
+
+                            <option value="active">
+                                Active
+                            </option>
+
+                            <option value="inactive">
+                                Inactive
+                            </option>
+                        </select>
+
+                    </div>
+
+                    <!-- Featured -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Featured
+                        </label>
+
+                        <select
+                            v-model="featured"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            @change="applyFilters"
+                        >
+                            <option value="">
+                                All Products
+                            </option>
+
+                            <option value="yes">
+                                Featured
+                            </option>
+
+                            <option value="no">
+                                Not Featured
+                            </option>
+                        </select>
+
+                    </div>
+
+                    <!-- Min Price -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Min Price
+                        </label>
+
+                        <input
+                            v-model="minPrice"
+                            type="number"
+                            min="0"
+                            placeholder="Minimum price"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        />
+
+                    </div>
+
+                    <!-- Max Price -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Max Price
+                        </label>
+
+                        <input
+                            v-model="maxPrice"
+                            type="number"
+                            min="0"
+                            placeholder="Maximum price"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        />
+
+                    </div>
+
+                    <!-- Date From -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Created From
+                        </label>
+
+                        <input
+                            v-model="dateFrom"
+                            type="date"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        />
+
+                    </div>
+
+                    <!-- Date To -->
+                    <div>
+
+                        <label class="mb-1 block text-sm font-medium text-gray-700">
+                            Created To
+                        </label>
+
+                        <input
+                            v-model="dateTo"
+                            type="date"
+                            class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        />
+
+                    </div>
+
+                </div>
+
+                <!-- Stock Quick Filters -->
+                <div class="mt-5">
+
+                    <label class="mb-2 block text-sm font-medium text-gray-700">
+                        Stock Filters
+                    </label>
+
+                    <div class="flex flex-wrap gap-2">
+
+                        <button
+                            type="button"
+                            @click="setStockFilter('')"
+                            :class="[
+                                stockFilter === ''
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                                'rounded-lg px-4 py-2 text-sm font-medium'
+                            ]"
+                        >
+                            All Stock
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="setStockFilter('low')"
+                            :class="[
+                                stockFilter === 'low'
+                                    ? 'bg-yellow-500 text-white'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                                'rounded-lg px-4 py-2 text-sm font-medium'
+                            ]"
+                        >
+                            Low Stock
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="setStockFilter('out')"
+                            :class="[
+                                stockFilter === 'out'
+                                    ? 'bg-red-600 text-white'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                                'rounded-lg px-4 py-2 text-sm font-medium'
+                            ]"
+                        >
+                            Out of Stock
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <!-- Sort + Buttons -->
+                <div class="mt-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+
+                    <div class="flex flex-col gap-3 sm:flex-row">
+
+                        <div>
+
+                            <label class="mb-1 block text-sm font-medium text-gray-700">
+                                Sort
+                            </label>
+
+                            <select
+                                v-model="sort"
+                                @change="changeSort"
+                                class="rounded-lg border border-gray-300 px-4 py-2.5 text-sm"
+                            >
+                                <option value="newest">
+                                    Newest
+                                </option>
+
+                                <option value="oldest">
+                                    Oldest
+                                </option>
+
+                                <option value="name_asc">
+                                    Name A-Z
+                                </option>
+
+                                <option value="name_desc">
+                                    Name Z-A
+                                </option>
+
+                                <option value="price_low">
+                                    Price Low-High
+                                </option>
+
+                                <option value="price_high">
+                                    Price High-Low
+                                </option>
+                            </select>
+
+                        </div>
+
+                        <div>
+
+                            <label class="mb-1 block text-sm font-medium text-gray-700">
+                                Per Page
+                            </label>
+
+                            <select
+                                v-model="perPage"
+                                @change="changePerPage"
+                                class="rounded-lg border border-gray-300 px-4 py-2.5 text-sm"
+                            >
+                                <option :value="5">
+                                    5
+                                </option>
+
+                                <option :value="10">
+                                    10
+                                </option>
+
+                                <option :value="20">
+                                    20
+                                </option>
+
+                                <option :value="50">
+                                    50
+                                </option>
+                            </select>
+
+                        </div>
+
+                    </div>
+
+                    <div class="flex gap-2">
+
+                        <button
+                            type="button"
+                            @click="applyFilters"
+                            :disabled="loading"
+                            class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            {{ loading ? 'Loading...' : 'Apply Filters' }}
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="clearFilters"
+                            class="rounded-lg bg-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-300"
+                        >
+                            Clear
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- Bulk Actions -->
+            <div
+                v-if="selectedIds.length > 0"
+                class="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4"
+            >
+
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+                    <div>
+                        <p class="font-semibold text-blue-900">
+                            {{ selectedIds.length }} product(s) selected
+                        </p>
+
+                        <p class="text-sm text-blue-700">
+                            Choose a bulk operation below.
+                        </p>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+
+                        <button
+                            type="button"
+                            @click="bulkStatus('active')"
+                            :disabled="bulkLoading"
+                            class="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                        >
+                            Activate
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="bulkStatus('inactive')"
+                            :disabled="bulkLoading"
+                            class="rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white hover:bg-yellow-700 disabled:opacity-50"
+                        >
+                            Deactivate
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="openBulkPriceModal"
+                            :disabled="bulkLoading"
+                            class="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+                        >
+                            Update Prices
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="openBulkDeleteModal"
+                            :disabled="bulkLoading"
+                            class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                            Delete Selected
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="clearSelection"
+                            class="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50"
+                        >
+                            Clear Selection
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- Product Table -->
+            <div class="overflow-hidden rounded-xl bg-white shadow">
+
+                <div class="overflow-x-auto">
+
+                    <table class="min-w-full divide-y divide-gray-200">
+
+                        <thead class="bg-gray-50">
+
+                            <tr>
+
+                                <!-- Select All -->
+                                <th class="px-4 py-3 text-left">
+
+                                    <input
+                                        type="checkbox"
+                                        :checked="allCurrentPageSelected"
+                                        @change="toggleSelectAll"
+                                        class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Product
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Category
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Price
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Stock
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Status
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Featured
+                                </th>
+
+                                <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Created
+                                </th>
+
+                                <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                    Actions
+                                </th>
+
+                            </tr>
+
+                        </thead>
+
+                        <tbody class="divide-y divide-gray-100">
+
+                            <tr
+                                v-for="product in products.data"
+                                :key="product.id"
+                                class="hover:bg-gray-50"
+                            >
+
+                                <!-- Checkbox -->
+                                <td class="px-4 py-4">
+
+                                    <input
+                                        type="checkbox"
+                                        :checked="isSelected(product.id)"
+                                        @change="toggleSelection(product.id)"
+                                        class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+
+                                </td>
+
+                                <!-- Product -->
+                                <td class="px-4 py-4">
+
+                                    <div class="font-semibold text-gray-900">
+                                        {{ product.name }}
+                                    </div>
+
+                                    <div
+                                        v-if="product.detail"
+                                        class="mt-1 max-w-xs truncate text-sm text-gray-500"
+                                    >
+                                        {{ product.detail }}
+                                    </div>
+
+                                </td>
+
+                                <!-- Category -->
+                                <td class="px-4 py-4">
+
+                                    <span
+                                        v-if="product.category"
+                                        class="inline-flex rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700"
+                                    >
+                                        {{ product.category }}
+                                    </span>
+
+                                    <span
+                                        v-else
+                                        class="text-sm text-gray-400"
+                                    >
+                                        —
+                                    </span>
+
+                                </td>
+
+                                <!-- Price -->
+                                <td class="px-4 py-4 font-semibold text-gray-900">
+                                    {{ formatPrice(product.price) }}
+                                </td>
+
+                                <!-- Stock -->
+                                <td class="px-4 py-4">
+
+                                    <div class="flex flex-col gap-1">
+
+                                        <span
+                                            :class="[
+                                                stockClass(product.stock),
+                                                'inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold'
+                                            ]"
+                                        >
+                                            {{ product.stock ?? 0 }}
+                                        </span>
+
+                                        <span class="text-xs text-gray-500">
+                                            {{ stockLabel(product.stock) }}
+                                        </span>
+
+                                    </div>
+
+                                </td>
+
+                                <!-- Status -->
+                                <td class="px-4 py-4">
+
+                                    <button
+                                        type="button"
+                                        @click="toggleStatus(product)"
+                                        :class="[
+                                            product.status === 'active'
+                                                ? 'bg-green-100 text-green-700'
+                                                : 'bg-gray-200 text-gray-700',
+                                            'rounded-full px-3 py-1 text-xs font-semibold'
+                                        ]"
+                                    >
+                                        {{ product.status === 'active' ? 'Active' : 'Inactive' }}
+                                    </button>
+
+                                </td>
+
+                                <!-- Featured -->
+                                <td class="px-4 py-4">
+
+                                    <button
+                                        type="button"
+                                        @click="toggleFeatured(product)"
+                                        :class="[
+                                            product.is_featured
+                                                ? 'bg-yellow-100 text-yellow-700'
+                                                : 'bg-gray-100 text-gray-500',
+                                            'rounded-full px-3 py-1 text-xs font-semibold'
+                                        ]"
+                                    >
+                                        {{ product.is_featured ? '★ Featured' : '☆ Not Featured' }}
+                                    </button>
+
+                                </td>
+
+                                <!-- Created -->
+                                <td class="whitespace-nowrap px-4 py-4 text-sm text-gray-500">
+                                    {{ formatDate(product.created_at) }}
+                                </td>
+
+                                <!-- Actions -->
+                                <td class="px-4 py-4">
+
+                                    <div class="flex flex-wrap justify-end gap-2">
+
+                                        <Link
+                                            :href="`/products/${product.id}/edit`"
+                                            class="rounded-lg bg-blue-100 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-200"
+                                        >
+                                            Edit
+                                        </Link>
+
+                                        <button
+                                            type="button"
+                                            @click="duplicateProduct(product.id)"
+                                            class="rounded-lg bg-purple-100 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-200"
+                                        >
+                                            Clone
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            @click="openDeleteModal(product.id)"
+                                            class="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-200"
+                                        >
+                                            Delete
+                                        </button>
+
+                                    </div>
+
+                                </td>
+
+                            </tr>
+
+                            <!-- Empty State -->
+                            <tr v-if="!products.data || products.data.length === 0">
+
+                                <td
+                                    colspan="9"
+                                    class="px-6 py-12 text-center"
+                                >
+
+                                    <div class="text-lg font-semibold text-gray-700">
+                                        No products found
+                                    </div>
+
+                                    <p class="mt-1 text-sm text-gray-500">
+                                        Try changing your search or filters.
+                                    </p>
+
+                                </td>
+
+                            </tr>
+
+                        </tbody>
+
+                    </table>
+
+                </div>
+
+                <!-- Pagination -->
+                <div
+                    v-if="numericPaginationLinks.length > 0"
+                    class="flex flex-wrap justify-center gap-2 border-t border-gray-200 px-6 py-4"
                 >
-                  No products found
-                </p>
 
-                <p
-                  class="text-sm mt-1"
-                >
-                  Try changing your search or filters.
-                </p>
+                    <button
+                        v-for="link in numericPaginationLinks"
+                        :key="link.label"
+                        type="button"
+                        @click="goToPage(link.url)"
+                        :class="[
+                            link.active
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-white text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50',
+                            'min-w-[40px] rounded-lg px-3 py-2 text-sm font-semibold'
+                        ]"
+                    >
+                        {{ link.label }}
+                    </button>
 
-              </td>
+                </div>
 
-            </tr>
-
-          </tbody>
-
-        </table>
-
-      </div>
-
-
-      <!-- ===================================================== -->
-      <!-- PAGINATION -->
-      <!-- ===================================================== -->
-
-      <div
-        v-if="products.links.length > 1"
-        class="flex flex-wrap justify-center gap-2 mt-6"
-      >
-
-        <button
-          v-for="link in products.links"
-          :key="link.label"
-          v-html="link.label"
-          :disabled="!link.url"
-          @click="goToPage(link.url)"
-          class="px-3 py-1 border rounded"
-          :class="{
-            'bg-blue-600 text-white':
-              link.active,
-
-            'text-gray-400 cursor-not-allowed':
-              !link.url,
-
-            'hover:bg-gray-100':
-              link.url && !link.active
-          }"
-        />
-
-      </div>
-
-    </div>
-
-
-    <!-- ===================================================== -->
-    <!-- DELETE MODAL -->
-    <!-- ===================================================== -->
-
-    <div
-      v-if="showDeleteModal"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-    >
-
-      <div
-        class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4"
-      >
-
-        <h3
-          class="text-lg font-semibold mb-4"
-        >
-          Delete Product
-        </h3>
-
-        <p
-          class="text-gray-600 mb-6"
-        >
-          Are you sure you want to delete this
-          product? This action cannot be undone.
-        </p>
-
-        <div
-          class="flex justify-end gap-3"
-        >
-
-          <button
-            @click="cancelDelete"
-            class="px-4 py-2 border rounded hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-
-          <button
-            @click="confirmDelete"
-            class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-          >
-            Delete
-          </button>
+            </div>
 
         </div>
 
-      </div>
+        <!-- Delete Modal -->
+        <div
+            v-if="showDeleteModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        >
+
+            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+
+                <h2 class="text-xl font-bold text-gray-900">
+                    Delete Product
+                </h2>
+
+                <p class="mt-2 text-sm text-gray-600">
+                    Are you sure you want to delete this product?
+                    This action cannot be undone.
+                </p>
+
+                <div class="mt-6 flex justify-end gap-3">
+
+                    <button
+                        type="button"
+                        @click="closeDeleteModal"
+                        :disabled="deleting"
+                        class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="button"
+                        @click="deleteProduct"
+                        :disabled="deleting"
+                        class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                        {{ deleting ? 'Deleting...' : 'Delete' }}
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- Bulk Delete Modal -->
+        <div
+            v-if="showBulkDeleteModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        >
+
+            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+
+                <h2 class="text-xl font-bold text-gray-900">
+                    Delete Selected Products
+                </h2>
+
+                <p class="mt-2 text-sm text-gray-600">
+                    You selected
+                    <strong>{{ selectedIds.length }}</strong>
+                    product(s).
+                    Are you sure you want to delete them?
+                </p>
+
+                <div class="mt-6 flex justify-end gap-3">
+
+                    <button
+                        type="button"
+                        @click="closeBulkDeleteModal"
+                        :disabled="bulkLoading"
+                        class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="button"
+                        @click="bulkDelete"
+                        :disabled="bulkLoading"
+                        class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                        {{ bulkLoading ? 'Deleting...' : 'Delete Selected' }}
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- Bulk Price Modal -->
+        <div
+            v-if="showBulkPriceModal"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        >
+
+            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+
+                <h2 class="text-xl font-bold text-gray-900">
+                    Bulk Price Update
+                </h2>
+
+                <p class="mt-2 text-sm text-gray-500">
+                    Update prices for {{ selectedIds.length }} selected product(s).
+                </p>
+
+                <div class="mt-5">
+
+                    <label class="mb-1 block text-sm font-medium text-gray-700">
+                        Update Type
+                    </label>
+
+                    <select
+                        v-model="bulkPriceMode"
+                        class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm"
+                    >
+                        <option value="set">
+                            Set Price
+                        </option>
+
+                        <option value="increase">
+                            Increase Price
+                        </option>
+
+                        <option value="decrease">
+                            Decrease Price
+                        </option>
+                    </select>
+
+                </div>
+
+                <div class="mt-4">
+
+                    <label class="mb-1 block text-sm font-medium text-gray-700">
+                        Amount
+                    </label>
+
+                    <input
+                        v-model="bulkPriceValue"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Enter amount"
+                        class="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm"
+                    />
+
+                </div>
+
+                <div class="mt-6 flex justify-end gap-3">
+
+                    <button
+                        type="button"
+                        @click="closeBulkPriceModal"
+                        :disabled="bulkLoading"
+                        class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        type="button"
+                        @click="bulkPriceUpdate"
+                        :disabled="bulkLoading"
+                        class="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+                    >
+                        {{ bulkLoading ? 'Updating...' : 'Update Prices' }}
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- Toast -->
+        <div
+            v-if="toast.show"
+            class="fixed bottom-6 right-6 z-[60]"
+        >
+
+            <div
+                :class="[
+                    toast.type === 'error'
+                        ? 'bg-red-600'
+                        : 'bg-green-600',
+                    'rounded-lg px-5 py-3 text-sm font-semibold text-white shadow-xl'
+                ]"
+            >
+                {{ toast.message }}
+            </div>
+
+        </div>
 
     </div>
-
-  </div>
 </template>
-
-
-<style>
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.3s ease;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(100%);
-}
-</style>
